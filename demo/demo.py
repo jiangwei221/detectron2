@@ -9,6 +9,7 @@ import time
 import warnings
 import cv2
 import tqdm
+import imageio
 
 from detectron2.config import get_cfg
 from detectron2.data.detection_utils import read_image
@@ -110,6 +111,14 @@ if __name__ == "__main__":
             img = read_image(path, format="BGR")
             start_time = time.time()
             predictions, visualized_output = demo.run_on_image(img)
+            person_idx = (predictions['instances'].get_fields()['pred_classes'] == 0).nonzero()[0].cpu().item()
+
+            # save masks
+            if not os.path.exists(args.output):
+                os.makedirs(args.output)
+            imageio.imsave(os.path.join(args.output, f'{os.path.basename(path)}'), (1-predictions['instances'][person_idx].pred_masks[0].cpu().numpy().astype(np.uint8))*255)
+            imageio.imsave(os.path.join(args.output, f'{os.path.basename(path)}.png'), (1-predictions['instances'][person_idx].pred_masks[0].cpu().numpy().astype(np.uint8))*255)
+
             logger.info(
                 "{}: {} in {:.2f}s".format(
                     path,
@@ -121,9 +130,11 @@ if __name__ == "__main__":
             )
 
             if args.output:
-                if os.path.isdir(args.output):
-                    assert os.path.isdir(args.output), args.output
-                    out_filename = os.path.join(args.output, os.path.basename(path))
+                if not os.path.exists(os.path.join(args.output, 'det')):
+                    os.makedirs(os.path.join(args.output, 'det'))
+                if os.path.isdir(os.path.join(args.output, 'det')):
+                    assert os.path.isdir(os.path.join(args.output, 'det')), os.path.join(args.output, 'det')
+                    out_filename = os.path.join(args.output, 'det', os.path.basename(path))
                 else:
                     assert len(args.input) == 1, "Please specify a directory with args.output"
                     out_filename = args.output

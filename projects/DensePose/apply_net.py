@@ -9,6 +9,9 @@ import pickle
 import sys
 from typing import Any, ClassVar, Dict, List
 import torch
+import numpy as np
+import imageio
+import math
 
 from detectron2.config import CfgNode, get_cfg
 from detectron2.data.detection_utils import read_image
@@ -79,6 +82,7 @@ class InferenceAction(Action):
         parser.add_argument("cfg", metavar="<config>", help="Config file")
         parser.add_argument("model", metavar="<model>", help="Model file")
         parser.add_argument("input", metavar="<input>", help="Input data")
+        parser.add_argument("save_dir", metavar="<save_dir>", help="Save DensePose results")
         parser.add_argument(
             "--opts",
             help="Modify config options using the command-line 'KEY VALUE' pairs",
@@ -132,7 +136,7 @@ class InferenceAction(Action):
             file_list = [input_spec]
         else:
             file_list = glob.glob(input_spec)
-        return file_list
+        return sorted(file_list)
 
 
 @register_action
@@ -340,14 +344,50 @@ def create_argument_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def export_masks(args):
+    if not os.path.exists(args.save_dir):
+        os.makedirs(args.save_dir)
+    image_paths = sorted(next(os.walk(args.input), (None, None, []))[2])
+
+    print(image_paths)
+
+    data = pickle.load(open(args.output, 'rb'))
+
+    assert len(image_paths) == len(data)
+
+    for i in range(len(image_paths)):
+        img_path = os.path.join(args.input, image_paths[i])
+        img = imageio.imread(img_path)
+        pred = data[i]
+        assert os.path.basename(img_path) == os.path.basename(pred['file_name'])
+        assert int(os.path.basename(pred['file_name'])[:-4]) == i
+
+        mask = np.zeros_like(img[..., 0])
+
+        idx = np.argmax(pred['scores']).item() # use the one with highest score
+        start_x = math.floor(pred['pred_boxes_XYXY'][idx][0])
+        start_y = math.floor(pred['pred_boxes_XYXY'][idx][1])
+        lables = pred['pred_densepose'][idx].labels.cpu().numpy()
+
+        mask[start_y:start_y+lables.shape[0], start_x:start_x+lables.shape[1]] = lables
+
+        imageio.imsave(os.path.join(args.save_dir, f'vis_{image_paths[i]}'), img * (mask > 0)[..., None])
+        np.save(os.path.join(args.save_dir, f'dp_{image_paths[i]}.npy'), mask)
+
+
 def main():
     parser = create_argument_parser()
     args = parser.parse_args()
+    if not os.path.exists(args.save_dir):
+        os.makedirs(args.save_dir)
+    if not os.path.exists(os.path.dirname(args.output)):
+        os.makedirs(os.path.dirname(args.output))
     verbosity = args.verbosity if hasattr(args, "verbosity") else None
     global logger
     logger = setup_logger(name=LOGGER_NAME)
     logger.setLevel(verbosity_to_level(verbosity))
     args.func(args)
+    export_masks(args)
 
 
 if __name__ == "__main__":
